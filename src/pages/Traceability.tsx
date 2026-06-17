@@ -1,6 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useStore } from "@/store";
-import { cn, formatDateTime, statusMap, resultMap, safeAvg } from "@/utils";
+import { cn, formatDateTime, statusMap, resultMap, safeAvg, calcBatchAbnormalities, AbnormalityResult } from "@/utils";
 import { useSearchParams } from "react-router-dom";
 import {
   Search,
@@ -29,17 +29,43 @@ import {
   TrendingDown,
   TrendingUp as TrendingUpIcon,
   AlertCircle,
+  ShieldCheck,
+  ShieldAlert,
+  Wrench,
+  ThumbsUp,
+  Edit3,
+  Save,
+  RotateCcw,
+  Ban,
+  CheckCheck,
+  Eye,
+  ArrowRight,
 } from "lucide-react";
+import { AbnormalDisposition, BatchDisposition, BatchFinalConclusion, DeformationRecord, DispositionStatus } from "@/types";
 
 
 export default function Traceability() {
-  const { furnaceBatches, partItems, carburizingRecords, temperingRecords, metallographyRecords, hardnessRecords, deformationRecords, processCards } = useStore();
-  const [searchParams] = useSearchParams();
+  const {
+    furnaceBatches,
+    partItems,
+    carburizingRecords,
+    temperingRecords,
+    metallographyRecords,
+    hardnessRecords,
+    deformationRecords,
+    processCards,
+    abnormalDispositions,
+    batchDispositions,
+    upsertAbnormalDisposition,
+    setBatchDisposition,
+  } = useStore();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [search, setSearch] = useState("");
   const urlBatchId = searchParams.get("batchId");
   const [selectedId, setSelectedId] = useState<string | null>(urlBatchId || furnaceBatches[0]?.id || null);
   const [viewMode, setViewMode] = useState<"detail" | "compare">("detail");
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const abnormalSummaryRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (urlBatchId && furnaceBatches.some((b) => b.id === urlBatchId)) {
@@ -48,7 +74,16 @@ export default function Traceability() {
     }
   }, [urlBatchId, furnaceBatches]);
 
-  const getBatchAbnormalities = (batchId: string) => {
+  useEffect(() => {
+    const hash = window.location.hash.replace("#", "");
+    if (hash === "abnormal-summary" && abnormalSummaryRef.current && viewMode === "detail") {
+      setTimeout(() => {
+        abnormalSummaryRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 200);
+    }
+  }, [selectedId, viewMode, searchParams]);
+
+  const getBatchAbnormalities = (batchId: string): AbnormalityResult => {
     return calcBatchAbnormalities(batchId, {
       furnaceBatches,
       processCards,
@@ -661,6 +696,27 @@ export default function Traceability() {
                 </div>
               )}
 
+              <div ref={abnormalSummaryRef} id="abnormal-summary">
+                <QualityAbnormalSummary
+                  batchId={selectedId || ""}
+                  abnormalities={getBatchAbnormalities(selectedId || "")}
+                  dispositions={abnormalDispositions.filter((d) => d.batchId === selectedId)}
+                  batchDisposition={batchDispositions.find((bd) => bd.batchId === selectedId)}
+                  onUpsertDisposition={upsertAbnormalDisposition}
+                  onSetBatchDisposition={setBatchDisposition}
+                  deformation={deformation}
+                />
+              </div>
+
+              <ClosureLoopPanel
+                batchId={selectedId || ""}
+                abnormalities={getBatchAbnormalities(selectedId || "")}
+                dispositions={abnormalDispositions.filter((d) => d.batchId === selectedId)}
+                batchDisposition={batchDispositions.find((bd) => bd.batchId === selectedId)}
+                missingSteps={missingSteps}
+                deformation={deformation}
+              />
+
               {processCard && (
                 <TraceSection
                   title="工艺卡片信息"
@@ -948,71 +1004,6 @@ export default function Traceability() {
   );
 }
 
-function calcBatchAbnormalities(
-  batchId: string,
-  data: {
-    furnaceBatches: any[];
-    processCards: any[];
-    partItems: any[];
-    carburizingRecords: any[];
-    temperingRecords: any[];
-    metallographyRecords: any[];
-    hardnessRecords: any[];
-    deformationRecords: any[];
-  }
-) {
-  const reasons: string[] = [];
-  const details: string[] = [];
-  const carb = data.carburizingRecords.find((r) => r.batchId === batchId);
-  const temp = data.temperingRecords.find((r) => r.batchId === batchId);
-  const mt = data.metallographyRecords.filter((r) => r.batchId === batchId);
-  const hd = data.hardnessRecords.filter((r) => r.batchId === batchId);
-  const df = data.deformationRecords.filter((r) => r.batchId === batchId);
-  const batchParts = data.partItems.filter((p) => p.batchId === batchId);
-  const batch = data.furnaceBatches.find((b) => b.id === batchId);
-  const card = data.processCards.find((c) => c.id === batch?.processCardId);
-
-  if (batchParts.length === 0) { reasons.push("缺装炉零件"); details.push("装炉零件清单为空"); }
-  if (!carb) { reasons.push("缺渗碳记录"); details.push("缺少渗碳淬火环节记录"); }
-  if (!temp) { reasons.push("缺回火记录"); details.push("缺少回火处理环节记录"); }
-  if (mt.length === 0) { reasons.push("缺金相记录"); details.push("缺少金相检测环节记录"); }
-  if (hd.length === 0) { reasons.push("缺硬度记录"); details.push("缺少硬度检验环节记录"); }
-
-  const failMt = mt.filter((m) => m.result === "fail");
-  if (failMt.length > 0) {
-    reasons.push("金相不合格");
-    failMt.forEach((m) => details.push(`金相不合格: 试样${m.sampleNo} (${m.partNo})`));
-  }
-  const failHd = hd.filter((h) => h.result === "fail");
-  if (failHd.length > 0) {
-    reasons.push("硬度不合格");
-    failHd.forEach((h) => details.push(`硬度不合格: 试样${h.sampleNo} 表面${h.surfaceAvg}HRC`));
-  }
-  const failDf = df.filter((d) => d.result === "fail");
-  if (failDf.length > 0) {
-    reasons.push("变形矫正不合格");
-    failDf.forEach((d) => details.push(`变形不合格: 零件${d.partNo} ${d.measurementPoint}`));
-  }
-
-  if (card && carb) {
-    const avgD = safeAvg(carb.layerDepths);
-    if (avgD < card.layerDepthMin) { reasons.push("渗碳层深超限"); details.push(`渗碳层深偏低: 均值${avgD.toFixed(3)}mm < ${card.layerDepthMin}mm`); }
-    if (avgD > card.layerDepthMax) { reasons.push("渗碳层深超限"); details.push(`渗碳层深偏高: 均值${avgD.toFixed(3)}mm > ${card.layerDepthMax}mm`); }
-  }
-  if (card && hd.length > 0) {
-    const avgS = safeAvg(hd.map((h) => h.surfaceAvg));
-    const avgC = safeAvg(hd.map((h) => h.coreAvg));
-    if (avgS < card.hardnessMin) { reasons.push("表面硬度超限"); details.push(`表面硬度偏低: 均值${avgS.toFixed(1)}HRC < ${card.hardnessMin}HRC`); }
-    if (avgS > card.hardnessMax) { reasons.push("表面硬度超限"); details.push(`表面硬度偏高: 均值${avgS.toFixed(1)}HRC > ${card.hardnessMax}HRC`); }
-    const coreMin = card.hardnessMin - 10;
-    const coreMax = card.hardnessMax - 5;
-    if (avgC < coreMin) { reasons.push("心部硬度超限"); details.push(`心部硬度偏低: 均值${avgC.toFixed(1)}HRC < ${coreMin}HRC`); }
-    if (avgC > coreMax) { reasons.push("心部硬度超限"); details.push(`心部硬度偏高: 均值${avgC.toFixed(1)}HRC > ${coreMax}HRC`); }
-  }
-
-  return { isAbnormal: reasons.length > 0, reasons: Array.from(new Set(reasons)), details };
-}
-
 function TraceSection({
   title,
   icon: Icon,
@@ -1047,6 +1038,438 @@ function TraceSection({
         {badge}
       </div>
       {children}
+    </div>
+  );
+}
+
+const dispositionStatusMap: Record<DispositionStatus, { label: string; icon: any; bg: string; text: string }> = {
+  pending: { label: "待处置", icon: Clock, bg: "bg-slate-100", text: "text-slate-600" },
+  reviewed: { label: "已复核", icon: CheckCheck, bg: "bg-emerald-100", text: "text-emerald-700" },
+  rework: { label: "需返工", icon: Wrench, bg: "bg-orange-100", text: "text-orange-700" },
+  concession: { label: "让步放行", icon: ThumbsUp, bg: "bg-blue-100", text: "text-blue-700" },
+};
+
+const finalConclusionMap: Record<BatchFinalConclusion, { label: string; icon: any; bg: string; text: string }> = {
+  pending: { label: "待判定", icon: Clock, bg: "bg-slate-100", text: "text-slate-600" },
+  qualified: { label: "合格入库", icon: ShieldCheck, bg: "bg-emerald-100", text: "text-emerald-700" },
+  rework: { label: "返工处理", icon: Wrench, bg: "bg-orange-100", text: "text-orange-700" },
+  concession: { label: "让步接收", icon: ThumbsUp, bg: "bg-blue-100", text: "text-blue-700" },
+  scrap: { label: "报废处理", icon: Ban, bg: "bg-red-100", text: "text-red-700" },
+};
+
+function QualityAbnormalSummary({
+  batchId,
+  abnormalities,
+  dispositions,
+  batchDisposition,
+  onUpsertDisposition,
+  onSetBatchDisposition,
+  deformation,
+}: {
+  batchId: string;
+  abnormalities: AbnormalityResult;
+  dispositions: AbnormalDisposition[];
+  batchDisposition?: BatchDisposition;
+  onUpsertDisposition: (d: Omit<AbnormalDisposition, "id" | "updatedAt"> & { id?: string }) => void;
+  onSetBatchDisposition: (d: Omit<BatchDisposition, "updatedAt">) => void;
+  deformation: DeformationRecord[];
+}) {
+  type QAItem = { key: string; type: "missing" | "fail" | "limit"; detail: string };
+  const [localRemark, setLocalRemark] = useState<Record<string, string>>({});
+  const [finalRemark, setFinalRemark] = useState(batchDisposition?.remark || "");
+  const [finalReviewer, setFinalReviewer] = useState(batchDisposition?.reviewer || "");
+
+  useEffect(() => {
+    setFinalRemark(batchDisposition?.remark || "");
+    setFinalReviewer(batchDisposition?.reviewer || "");
+  }, [batchDisposition?.batchId, batchDisposition?.updatedAt]);
+
+  const buildAllItems = () => {
+    const items: QAItem[] = [];
+    abnormalities.missingItems.forEach((m, i) =>
+      items.push({ key: `missing-${i}-${m}`, type: "missing", detail: `缺记录: ${m}` })
+    );
+    abnormalities.failItems.forEach((d, i) =>
+      items.push({ key: `fail-${i}-${d}`, type: "fail", detail: d })
+    );
+    abnormalities.limitItems.forEach((d, i) =>
+      items.push({ key: `limit-${i}-${d}`, type: "limit", detail: d })
+    );
+    deformation
+      .filter((d) => d.result === "correcting")
+      .forEach((d, i) =>
+        items.push({
+          key: `corr-${i}-${d.id}`,
+          type: "fail",
+          detail: `矫正进行中: 零件${d.partNo} ${d.measurementPoint}`,
+        })
+      );
+    return items;
+  };
+
+  const items = buildAllItems();
+  const getDisp = (key: string) => dispositions.find((d) => d.abnormalKey === key);
+  const reviewedCount = items.filter((it) => getDisp(it.key)?.status === "reviewed").length;
+  const reworkCount = items.filter((it) => getDisp(it.key)?.status === "rework").length;
+  const concessionCount = items.filter((it) => getDisp(it.key)?.status === "concession").length;
+  const pendingCount = items.length - reviewedCount - reworkCount - concessionCount;
+
+  const typeBadge = (t: QAItem["type"]) => {
+    if (t === "missing") return <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-medium">缺记录</span>;
+    if (t === "fail") return <span className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-medium">不合格</span>;
+    return <span className="px-1.5 py-0.5 rounded bg-orange-100 text-orange-700 text-[10px] font-medium">超限</span>;
+  };
+
+  return (
+    <div className="card-base border-red-100 bg-red-50/20">
+      <div className="flex items-center justify-between mb-4 pb-3 border-b border-red-100">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-lg bg-red-100 text-red-600 flex items-center justify-center">
+            <ShieldAlert className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              质量异常汇总与处置
+              {items.length > 0 && (
+                <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-700 text-[11px] font-medium">
+                  共 {items.length} 项
+                </span>
+              )}
+            </h4>
+            <div className="flex items-center gap-3 text-[11px] mt-0.5">
+              <span className="text-slate-500">待处置 <b className="text-slate-700">{pendingCount}</b></span>
+              <span className="text-slate-500">已复核 <b className="text-emerald-600">{reviewedCount}</b></span>
+              <span className="text-slate-500">需返工 <b className="text-orange-600">{reworkCount}</b></span>
+              <span className="text-slate-500">让步 <b className="text-blue-600">{concessionCount}</b></span>
+            </div>
+          </div>
+        </div>
+        {items.length === 0 && (
+          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 text-xs font-medium">
+            <CheckCircle2 className="w-3.5 h-3.5" /> 无异常
+          </span>
+        )}
+      </div>
+
+      {items.length > 0 && (
+        <div className="space-y-2 mb-4">
+          {items.map((it) => {
+            const disp = getDisp(it.key);
+            const st = disp?.status || "pending";
+            const cfg = dispositionStatusMap[st];
+            const StatusIcon = cfg.icon;
+            return (
+              <div key={it.key} className="p-3 rounded-lg bg-white border border-slate-100">
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1 flex-wrap">
+                      {typeBadge(it.type)}
+                      <span className="text-sm font-medium text-slate-800 break-all">{it.detail}</span>
+                    </div>
+                    {(disp?.remark || localRemark[it.key] !== undefined) && (
+                      <div className="text-[11px] text-slate-500 mb-1">
+                        备注: {disp?.remark || localRemark[it.key] || "-"}
+                      </div>
+                    )}
+                    {disp && (
+                      <div className="text-[10px] text-slate-400">
+                        {disp.operator ? `操作人: ${disp.operator} · ` : ""}更新于 {disp.updatedAt}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                    {(
+                      Object.keys(dispositionStatusMap) as DispositionStatus[]
+                    ).map((key) => {
+                      const c = dispositionStatusMap[key];
+                      const Icon = c.icon;
+                      const active = st === key;
+                      return (
+                        <button
+                          key={key}
+                          onClick={() =>
+                            onUpsertDisposition({
+                              id: disp?.id,
+                              batchId,
+                              abnormalKey: it.key,
+                              abnormalType: it.type,
+                              abnormalDetail: it.detail,
+                              status: key,
+                              operator: "当前用户",
+                              remark: localRemark[it.key] || disp?.remark,
+                            })
+                          }
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all border",
+                            active
+                              ? `${c.bg} ${c.text} border-transparent shadow-sm`
+                              : "bg-white border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                          )}
+                          title={c.label}
+                        >
+                          <Icon className="w-3 h-3" />
+                          {c.label}
+                        </button>
+                      );
+                    })}
+                    <input
+                      value={localRemark[it.key] ?? disp?.remark ?? ""}
+                      onChange={(e) => setLocalRemark({ ...localRemark, [it.key]: e.target.value })}
+                      placeholder="处置备注"
+                      className="w-32 px-2 py-1 rounded-md border border-slate-200 text-[11px] focus:border-primary-400 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <div className="pt-4 border-t border-slate-100">
+        <div className="flex items-center justify-between mb-3">
+          <h5 className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+            <ShieldCheck className="w-3.5 h-3.5 text-primary-600" />
+            最终处置结论
+          </h5>
+          {batchDisposition && (
+            <span className="text-[10px] text-slate-400">更新于 {batchDisposition.updatedAt}</span>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          {(Object.keys(finalConclusionMap) as BatchFinalConclusion[]).map((key) => {
+            const c = finalConclusionMap[key];
+            const Icon = c.icon;
+            const active = (batchDisposition?.finalConclusion || "pending") === key;
+            return (
+              <button
+                key={key}
+                onClick={() =>
+                  onSetBatchDisposition({
+                    batchId,
+                    finalConclusion: key,
+                    reviewer: finalReviewer || undefined,
+                    remark: finalRemark || undefined,
+                  })
+                }
+                className={cn(
+                  "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border transition-all",
+                  active
+                    ? `${c.bg} ${c.text} border-transparent shadow-sm`
+                    : "bg-white border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700"
+                )}
+              >
+                <Icon className="w-3.5 h-3.5" />
+                {c.label}
+              </button>
+            );
+          })}
+          <div className="flex-1" />
+          <input
+            value={finalReviewer}
+            onChange={(e) => setFinalReviewer(e.target.value)}
+            onBlur={() =>
+              batchDisposition?.finalConclusion &&
+              onSetBatchDisposition({
+                batchId,
+                finalConclusion: batchDisposition.finalConclusion,
+                reviewer: finalReviewer || undefined,
+                remark: finalRemark || undefined,
+              })
+            }
+            placeholder="审核人"
+            className="w-24 px-2.5 py-1.5 rounded-md border border-slate-200 text-xs focus:border-primary-400 focus:outline-none"
+          />
+          <input
+            value={finalRemark}
+            onChange={(e) => setFinalRemark(e.target.value)}
+            onBlur={() =>
+              batchDisposition?.finalConclusion &&
+              onSetBatchDisposition({
+                batchId,
+                finalConclusion: batchDisposition.finalConclusion,
+                reviewer: finalReviewer || undefined,
+                remark: finalRemark || undefined,
+              })
+            }
+            placeholder="结论备注"
+            className="w-56 px-2.5 py-1.5 rounded-md border border-slate-200 text-xs focus:border-primary-400 focus:outline-none"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ClosureLoopPanel({
+  batchId,
+  abnormalities,
+  dispositions,
+  batchDisposition,
+  missingSteps,
+  deformation,
+}: {
+  batchId: string;
+  abnormalities: AbnormalityResult;
+  dispositions: AbnormalDisposition[];
+  batchDisposition?: BatchDisposition;
+  missingSteps: any[];
+  deformation: DeformationRecord[];
+}) {
+  const correctingDf = deformation.filter((d) => d.result === "correcting");
+  const failDf = deformation.filter((d) => d.result === "fail");
+  const passDf = deformation.filter((d) => d.result === "pass");
+
+  const fc = finalConclusionMap[batchDisposition?.finalConclusion || "pending"];
+  const FcIcon = fc.icon;
+
+  const loopStages = [
+    {
+      key: "missing",
+      title: "缺失记录",
+      icon: FileSearch,
+      items: abnormalities.missingItems.length > 0
+        ? abnormalities.missingItems.map((m) => `缺${m}`)
+        : missingSteps.map((s: any) => `待补录: ${s.label}`),
+      status: abnormalities.missingItems.length === 0 && missingSteps.length === 0 ? "done" : abnormalities.missingItems.length > 0 ? "warn" : "warn",
+    },
+    {
+      key: "test",
+      title: "检测异常",
+      icon: AlertTriangle,
+      items: [...abnormalities.failItems, ...abnormalities.limitItems],
+      status: abnormalities.failItems.length + abnormalities.limitItems.length === 0 ? "done" : "abnormal",
+    },
+    {
+      key: "correct",
+      title: "矫正状态",
+      icon: Ruler,
+      items: [
+        ...correctingDf.map((d) => `矫正中: ${d.partNo} ${d.measurementPoint}`),
+        ...failDf.map((d) => `矫正失败: ${d.partNo} ${d.measurementPoint}`),
+        ...passDf.map((d) => `矫正合格: ${d.partNo} ${d.measurementPoint}`),
+      ],
+      status: correctingDf.length === 0 ? (failDf.length === 0 ? "done" : "abnormal") : "active",
+    },
+    {
+      key: "dispose",
+      title: "异常处置",
+      icon: Eye,
+      items: dispositions
+        .filter((d) => d.status !== "pending")
+        .map((d) => `${dispositionStatusMap[d.status].label}: ${d.abnormalDetail.slice(0, 24)}${d.abnormalDetail.length > 24 ? "…" : ""}`),
+      status:
+        dispositions.filter((d) => d.status !== "pending").length ===
+        (abnormalities.missingItems.length + abnormalities.failItems.length + abnormalities.limitItems.length)
+          ? abnormalities.missingItems.length + abnormalities.failItems.length + abnormalities.limitItems.length === 0
+            ? "na"
+            : "done"
+          : "warn",
+    },
+    {
+      key: "final",
+      title: "最终结论",
+      icon: FcIcon,
+      items: batchDisposition
+        ? [
+            `结论: ${fc.label}`,
+            batchDisposition.reviewer ? `审核人: ${batchDisposition.reviewer}` : null,
+            batchDisposition.remark ? `备注: ${batchDisposition.remark}` : null,
+          ].filter(Boolean) as string[]
+        : [],
+      status: batchDisposition?.finalConclusion && batchDisposition.finalConclusion !== "pending" ? "done" : "warn",
+    },
+  ];
+
+  const stageColor: Record<string, { ring: string; bg: string; icon: string; dot: string }> = {
+    done: { ring: "ring-emerald-200", bg: "bg-emerald-50", icon: "bg-emerald-500 text-white", dot: "bg-emerald-500" },
+    abnormal: { ring: "ring-red-200", bg: "bg-red-50", icon: "bg-red-500 text-white", dot: "bg-red-500" },
+    warn: { ring: "ring-amber-200", bg: "bg-amber-50", icon: "bg-amber-500 text-white", dot: "bg-amber-500" },
+    active: { ring: "ring-blue-200", bg: "bg-blue-50", icon: "bg-blue-500 text-white animate-pulse", dot: "bg-blue-500" },
+    na: { ring: "ring-slate-200", bg: "bg-slate-50", icon: "bg-slate-300 text-white", dot: "bg-slate-300" },
+  };
+
+  const doneStages = loopStages.filter((s) => s.status === "done").length;
+  const closureProgress = Math.round((doneStages / loopStages.length) * 100);
+
+  return (
+    <div className="card-base border-primary-100 bg-gradient-to-br from-primary-50/40 to-white">
+      <div className="flex items-center justify-between mb-4 pb-3 border-b border-primary-100">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-lg bg-primary-100 text-primary-600 flex items-center justify-center">
+            <History className="w-5 h-5" />
+          </div>
+          <div>
+            <h4 className="text-sm font-bold text-slate-800">炉次质量闭环看板</h4>
+            <div className="text-[11px] text-slate-500 mt-0.5">
+              串联异常 → 处置 → 结论，确保每个问题都有闭环
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-right">
+            <div className="text-[10px] text-slate-500">闭环进度</div>
+            <div className="text-lg font-bold text-primary-700">{closureProgress}%</div>
+          </div>
+          <div className="w-16 h-16">
+            <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
+              <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#e2e8f0" strokeWidth="3" />
+              <circle
+                cx="18" cy="18" r="15.9155" fill="none"
+                stroke="#2563eb" strokeWidth="3"
+                strokeDasharray={`${closureProgress}, 100`}
+                strokeLinecap="round"
+              />
+            </svg>
+          </div>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {loopStages.map((stage, idx) => {
+          const Icon = stage.icon;
+          const sc = stageColor[stage.status];
+          const isLast = idx === loopStages.length - 1;
+          return (
+            <div key={stage.key} className="flex items-start gap-3 relative">
+              {!isLast && (
+                <div
+                  className={cn(
+                    "absolute left-[18px] top-10 w-0.5 h-[calc(100%-24px)]",
+                    stage.status === "done" ? "bg-emerald-300" : "bg-slate-200"
+                  )}
+                />
+              )}
+              <div className={cn("w-9 h-9 rounded-full flex items-center justify-center shrink-0 ring-4", sc.ring, sc.icon)}>
+                <Icon className="w-4 h-4" />
+              </div>
+              <div className={cn("flex-1 rounded-lg p-3 border", sc.bg, "border-transparent")}>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+                    {stage.title}
+                    <span className="text-[10px] text-slate-400 font-normal">环节 {idx + 1}</span>
+                  </div>
+                  <div className={cn("w-2 h-2 rounded-full", sc.dot)} />
+                </div>
+                {stage.items.length > 0 ? (
+                  <ul className="space-y-0.5">
+                    {stage.items.map((it, i) => (
+                      <li key={i} className="text-xs text-slate-600 flex items-center gap-1.5">
+                        <ArrowRight className="w-3 h-3 text-slate-400 shrink-0" />
+                        <span className="truncate">{it}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="text-xs text-slate-400">
+                    {stage.status === "done" || stage.status === "na" ? " ✓ 本环节已完成" : "暂无条目"}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -1112,8 +1535,12 @@ function BatchCompareView({ compareIds }: { compareIds: string[] }) {
       avgSurfaceHardness,
       avgCoreHardness,
       passRate,
-      isAbnormal: abn.isAbnormal,
       abnormalReasons: abn.reasons,
+      abnormalDetails: abn.details,
+      layerDepth: abn.layerDepth,
+      surfaceH: abn.surfaceHardness,
+      coreH: abn.coreHardness,
+      isAbnormal: abn.isAbnormal,
     };
   });
 
@@ -1185,21 +1612,35 @@ function BatchCompareView({ compareIds }: { compareIds: string[] }) {
                   <td className="py-3 px-3 text-center">
                     <span className={cn(
                       "text-sm font-mono font-semibold",
-                      bd.abnormalReasons.includes("渗碳层深超范围") ? "text-red-600" : "text-purple-600"
+                      bd.layerDepth && !bd.layerDepth.pass ? "text-red-600" : "text-purple-600"
                     )}>
                       {bd.avgLayerDepth}
                     </span>
+                    {bd.layerDepth && (
+                      <div className="text-[9px] text-slate-400">要求 {bd.layerDepth.min}-{bd.layerDepth.max}</div>
+                    )}
                   </td>
                   <td className="py-3 px-3 text-center">
                     <span className={cn(
                       "text-sm font-mono font-semibold",
-                      bd.abnormalReasons.includes("表面硬度超范围") ? "text-red-600" : "text-emerald-600"
+                      bd.surfaceH && !bd.surfaceH.pass ? "text-red-600" : "text-emerald-600"
                     )}>
                       {bd.avgSurfaceHardness}
                     </span>
+                    {bd.surfaceH && (
+                      <div className="text-[9px] text-slate-400">要求 {bd.surfaceH.min}-{bd.surfaceH.max}</div>
+                    )}
                   </td>
-                  <td className="py-3 px-3 text-center text-sm font-mono text-amber-600 font-semibold">
-                    {bd.avgCoreHardness}
+                  <td className="py-3 px-3 text-center">
+                    <span className={cn(
+                      "text-sm font-mono font-semibold",
+                      bd.coreH && !bd.coreH.pass ? "text-red-600" : "text-amber-600"
+                    )}>
+                      {bd.avgCoreHardness}
+                    </span>
+                    {bd.coreH && (
+                      <div className="text-[9px] text-slate-400">要求 {bd.coreH.min}-{bd.coreH.max}</div>
+                    )}
                   </td>
                   <td className="py-3 px-3 text-center">
                     <span className={cn(
@@ -1237,7 +1678,7 @@ function BatchCompareView({ compareIds }: { compareIds: string[] }) {
               <AlertTriangle className="w-5 h-5" />
             </div>
             <div className="flex-1">
-              <h4 className="text-sm font-bold text-red-800 mb-3">异常批次汇总</h4>
+              <h4 className="text-sm font-bold text-red-800 mb-3">异常批次汇总（清单与追溯详情一致）</h4>
               <div className="space-y-3">
                 {batchData.filter((bd) => bd.isAbnormal).map((bd) => (
                   <div key={bd.batch.id} className="p-3 rounded-lg bg-white/70 border border-red-100">
@@ -1245,13 +1686,21 @@ function BatchCompareView({ compareIds }: { compareIds: string[] }) {
                       <span className="font-mono text-sm font-semibold text-red-600">{bd.batch.batchNo}</span>
                       <span className="text-xs text-slate-400">{bd.batch.startTime}</span>
                     </div>
-                    <div className="flex flex-wrap gap-1.5">
+                    <div className="flex flex-wrap gap-1.5 mb-2">
                       {bd.abnormalReasons.map((reason, i) => (
                         <span key={i} className="px-2 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-medium">
                           {reason}
                         </span>
                       ))}
                     </div>
+                    <ul className="space-y-0.5">
+                      {bd.abnormalDetails.slice(0, 6).map((d, i) => (
+                        <li key={i} className="text-[11px] text-slate-600">• {d}</li>
+                      ))}
+                      {bd.abnormalDetails.length > 6 && (
+                        <li className="text-[11px] text-slate-400">…另有 {bd.abnormalDetails.length - 6} 项异常</li>
+                      )}
+                    </ul>
                   </div>
                 ))}
               </div>
@@ -1295,7 +1744,8 @@ function BatchCompareView({ compareIds }: { compareIds: string[] }) {
                 { label: "回火温度", key: "tempTemp", get: (bd: any) => bd.processCard ? `${bd.processCard.temperingTemp}℃` : "-" },
                 { label: "回火时间", key: "tempTime", get: (bd: any) => bd.processCard ? `${bd.processCard.temperingTime}min` : "-" },
                 { label: "层深范围", key: "depthRange", get: (bd: any) => bd.processCard ? `${bd.processCard.layerDepthMin}-${bd.processCard.layerDepthMax}mm` : "-" },
-                { label: "硬度范围", key: "hardRange", get: (bd: any) => bd.processCard ? `HRC ${bd.processCard.hardnessMin}-${bd.processCard.hardnessMax}` : "-" },
+                { label: "表面硬度范围", key: "surfHardRange", get: (bd: any) => bd.processCard ? `HRC ${bd.processCard.hardnessMin}-${bd.processCard.hardnessMax}` : "-" },
+                { label: "心部硬度范围", key: "coreHardRange", get: (bd: any) => bd.processCard ? `HRC ${bd.processCard.coreHardnessMin}-${bd.processCard.coreHardnessMax}` : "-" },
               ].map((row) => (
                 <tr key={row.key} className="border-b border-slate-50 hover:bg-slate-50">
                   <td className="py-2.5 px-3 text-xs text-slate-500 font-medium sticky left-0 bg-inherit">{row.label}</td>

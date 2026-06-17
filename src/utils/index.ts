@@ -1,4 +1,4 @@
-import { BatchStatus } from "../types";
+import { BatchStatus, ProcessCard } from "../types";
 
 export const statusMap: Record<
   BatchStatus,
@@ -121,3 +121,128 @@ export const validateNumberArray = (
 ): { valid: boolean; values: number[]; error?: string; details?: string[] } => {
   return strictValidateNumberArray(input, minCount, min, max);
 };
+
+export interface AbnormalityResult {
+  isAbnormal: boolean;
+  reasons: string[];
+  details: string[];
+  missingItems: string[];
+  failItems: string[];
+  limitItems: string[];
+  layerDepth: { avg: number; min: number; max: number; pass: boolean } | null;
+  surfaceHardness: { avg: number; min: number; max: number; pass: boolean } | null;
+  coreHardness: { avg: number; min: number; max: number; pass: boolean } | null;
+}
+
+export function calcBatchAbnormalities(
+  batchId: string,
+  data: {
+    furnaceBatches: any[];
+    processCards: any[];
+    partItems: any[];
+    carburizingRecords: any[];
+    temperingRecords: any[];
+    metallographyRecords: any[];
+    hardnessRecords: any[];
+    deformationRecords: any[];
+  }
+): AbnormalityResult {
+  const reasons: string[] = [];
+  const details: string[] = [];
+  const missingItems: string[] = [];
+  const failItems: string[] = [];
+  const limitItems: string[] = [];
+
+  const carb = data.carburizingRecords.find((r) => r.batchId === batchId);
+  const temp = data.temperingRecords.find((r) => r.batchId === batchId);
+  const mt = data.metallographyRecords.filter((r) => r.batchId === batchId);
+  const hd = data.hardnessRecords.filter((r) => r.batchId === batchId);
+  const df = data.deformationRecords.filter((r) => r.batchId === batchId);
+  const batchParts = data.partItems.filter((p) => p.batchId === batchId);
+  const batch = data.furnaceBatches.find((b) => b.id === batchId);
+  const card: ProcessCard | undefined = data.processCards.find((c) => c.id === batch?.processCardId);
+
+  if (batchParts.length === 0) { reasons.push("缺装炉零件"); details.push("装炉零件清单为空"); missingItems.push("装炉零件"); }
+  if (!carb) { reasons.push("缺渗碳记录"); details.push("缺少渗碳淬火环节记录"); missingItems.push("渗碳记录"); }
+  if (!temp) { reasons.push("缺回火记录"); details.push("缺少回火处理环节记录"); missingItems.push("回火记录"); }
+  if (mt.length === 0) { reasons.push("缺金相记录"); details.push("缺少金相检测环节记录"); missingItems.push("金相记录"); }
+  if (hd.length === 0) { reasons.push("缺硬度记录"); details.push("缺少硬度检验环节记录"); missingItems.push("硬度记录"); }
+
+  const failMt = mt.filter((m) => m.result === "fail");
+  if (failMt.length > 0) {
+    reasons.push("金相不合格");
+    failMt.forEach((m) => { const s = `金相不合格: 试样${m.sampleNo} (${m.partNo})`; details.push(s); failItems.push(s); });
+  }
+  const failHd = hd.filter((h) => h.result === "fail");
+  if (failHd.length > 0) {
+    reasons.push("硬度不合格");
+    failHd.forEach((h) => { const s = `硬度不合格: 试样${h.sampleNo} 表面${h.surfaceAvg}HRC`; details.push(s); failItems.push(s); });
+  }
+  const failDf = df.filter((d) => d.result === "fail");
+  if (failDf.length > 0) {
+    reasons.push("变形矫正不合格");
+    failDf.forEach((d) => { const s = `变形不合格: 零件${d.partNo} ${d.measurementPoint}`; details.push(s); failItems.push(s); });
+  }
+
+  let layerDepthResult: AbnormalityResult["layerDepth"] = null;
+  let surfaceHardnessResult: AbnormalityResult["surfaceHardness"] = null;
+  let coreHardnessResult: AbnormalityResult["coreHardness"] = null;
+
+  if (card && carb) {
+    const avgD = safeAvg(carb.layerDepths);
+    layerDepthResult = { avg: avgD, min: card.layerDepthMin, max: card.layerDepthMax, pass: true };
+    if (avgD < card.layerDepthMin) {
+      const s = `渗碳层深偏低: 均值${avgD.toFixed(3)}mm < 要求${card.layerDepthMin}mm`;
+      reasons.push("渗碳层深超限"); details.push(s); limitItems.push(s);
+      layerDepthResult.pass = false;
+    }
+    if (avgD > card.layerDepthMax) {
+      const s = `渗碳层深偏高: 均值${avgD.toFixed(3)}mm > 要求${card.layerDepthMax}mm`;
+      reasons.push("渗碳层深超限"); details.push(s); limitItems.push(s);
+      layerDepthResult.pass = false;
+    }
+  }
+
+  if (card && hd.length > 0) {
+    const avgS = safeAvg(hd.map((h) => h.surfaceAvg));
+    const avgC = safeAvg(hd.map((h) => h.coreAvg));
+
+    surfaceHardnessResult = { avg: avgS, min: card.hardnessMin, max: card.hardnessMax, pass: true };
+    if (avgS < card.hardnessMin) {
+      const s = `表面硬度偏低: 均值${avgS.toFixed(1)}HRC < 要求${card.hardnessMin}HRC`;
+      reasons.push("表面硬度超限"); details.push(s); limitItems.push(s);
+      surfaceHardnessResult.pass = false;
+    }
+    if (avgS > card.hardnessMax) {
+      const s = `表面硬度偏高: 均值${avgS.toFixed(1)}HRC > 要求${card.hardnessMax}HRC`;
+      reasons.push("表面硬度超限"); details.push(s); limitItems.push(s);
+      surfaceHardnessResult.pass = false;
+    }
+
+    const cMin = card.coreHardnessMin;
+    const cMax = card.coreHardnessMax;
+    coreHardnessResult = { avg: avgC, min: cMin, max: cMax, pass: true };
+    if (avgC < cMin) {
+      const s = `心部硬度偏低: 均值${avgC.toFixed(1)}HRC < 要求${cMin}HRC`;
+      reasons.push("心部硬度超限"); details.push(s); limitItems.push(s);
+      coreHardnessResult.pass = false;
+    }
+    if (avgC > cMax) {
+      const s = `心部硬度偏高: 均值${avgC.toFixed(1)}HRC > 要求${cMax}HRC`;
+      reasons.push("心部硬度超限"); details.push(s); limitItems.push(s);
+      coreHardnessResult.pass = false;
+    }
+  }
+
+  return {
+    isAbnormal: reasons.length > 0,
+    reasons: Array.from(new Set(reasons)),
+    details,
+    missingItems,
+    failItems,
+    limitItems,
+    layerDepth: layerDepthResult,
+    surfaceHardness: surfaceHardnessResult,
+    coreHardness: coreHardnessResult,
+  };
+}

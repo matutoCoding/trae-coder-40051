@@ -34,7 +34,7 @@ import {
   Bar,
   Legend,
 } from "recharts";
-import { statusMap, cn, formatDateTime, safeAvg } from "@/utils";
+import { statusMap, cn, formatDateTime, safeAvg, calcBatchAbnormalities } from "@/utils";
 import { useNavigate } from "react-router-dom";
 
 export default function Dashboard() {
@@ -139,37 +139,17 @@ export default function Dashboard() {
     : "0";
 
   const checkBatchAbnormal = (batchId: string) => {
-    const reasons: string[] = [];
-    const carb = carburizingRecords.find((r) => r.batchId === batchId);
-    const temp = temperingRecords.find((r) => r.batchId === batchId);
-    const mt = metallographyRecords.filter((r) => r.batchId === batchId);
-    const hd = hardnessRecords.filter((r) => r.batchId === batchId);
-    const df = deformationRecords.filter((r) => r.batchId === batchId);
-    const batchParts = partItems.filter((p) => p.batchId === batchId);
-    const card = processCards.find((c) => c.id === furnaceBatches.find((b) => b.id === batchId)?.processCardId);
-
-    if (batchParts.length === 0) reasons.push("缺装炉零件");
-    if (!carb) reasons.push("缺渗碳记录");
-    if (!temp) reasons.push("缺回火记录");
-    if (mt.length === 0) reasons.push("缺金相记录");
-    if (hd.length === 0) reasons.push("缺硬度记录");
-
-    if (mt.some((m) => m.result === "fail")) reasons.push("金相不合格");
-    if (hd.some((h) => h.result === "fail")) reasons.push("硬度不合格");
-    if (df.some((d) => d.result === "fail")) reasons.push("变形矫正不合格");
-
-    if (card && carb) {
-      const avgD = safeAvg(carb.layerDepths);
-      if (avgD < card.layerDepthMin || avgD > card.layerDepthMax) reasons.push("渗碳层深超限");
-    }
-    if (card && hd.length > 0) {
-      const avgS = safeAvg(hd.map((h) => h.surfaceAvg));
-      const avgC = safeAvg(hd.map((h) => h.coreAvg));
-      if (avgS < card.hardnessMin || avgS > card.hardnessMax) reasons.push("表面硬度超限");
-      if (avgC < (card.hardnessMin - 10) || avgC > (card.hardnessMax - 5)) reasons.push("心部硬度超限");
-    }
-
-    return reasons;
+    const r = calcBatchAbnormalities(batchId, {
+      furnaceBatches,
+      processCards,
+      partItems,
+      carburizingRecords,
+      temperingRecords,
+      metallographyRecords,
+      hardnessRecords,
+      deformationRecords,
+    });
+    return r.reasons;
   };
 
   const abnormalBatches = furnaceBatches
@@ -555,7 +535,7 @@ export default function Dashboard() {
               return (
                 <div
                   key={batch.id}
-                  onClick={() => navigate(`/traceability?batchId=${batch.id}`)}
+                  onClick={() => navigate(`/traceability?batchId=${batch.id}#abnormal-summary`)}
                   className={cn(
                     "p-3 rounded-lg border cursor-pointer transition-all hover:shadow-sm",
                     severity === "严重"

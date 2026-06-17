@@ -161,3 +161,27 @@ export interface TraceabilityRecord {
   hardness?: HardnessRecord[];
   deformation?: DeformationRecord[];
 }
+
+export type DispositionStatus = "pending" | "reviewed" | "rework" | "concession";
+
+export interface AbnormalDisposition {
+  id: string;
+  batchId: string;
+  abnormalKey: string;
+  abnormalType: "missing" | "fail" | "limit";
+  abnormalDetail: string;
+  status: DispositionStatus;
+  operator?: string;
+  remark?: string;
+  updatedAt: string;
+}
+
+export type BatchFinalConclusion = "pending" | "qualified" | "rework" | "concession" | "scrap";
+
+export interface BatchDisposition {
+  batchId: string;
+  finalConclusion: BatchFinalConclusion;
+  reviewer?: string;
+  remark?: string;
+  updatedAt: string;
+}

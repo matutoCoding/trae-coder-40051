@@ -8,6 +8,8 @@ import {
   MetallographyRecord,
   HardnessRecord,
   DeformationRecord,
+  AbnormalDisposition,
+  BatchDisposition,
 } from "../types";
 import {
   mockProcessCards,
@@ -31,6 +33,8 @@ interface PersistedState {
   metallographyRecords: MetallographyRecord[];
   hardnessRecords: HardnessRecord[];
   deformationRecords: DeformationRecord[];
+  abnormalDispositions: AbnormalDisposition[];
+  batchDispositions: BatchDisposition[];
 }
 
 const loadFromStorage = (): PersistedState | null => {
@@ -53,7 +57,7 @@ const saveToStorage = (state: PersistedState) => {
   }
 };
 
-const initialState = loadFromStorage() || {
+const initialState: PersistedState = loadFromStorage() || {
   processCards: mockProcessCards,
   furnaceBatches: mockFurnaceBatches,
   partItems: mockPartItems,
@@ -62,6 +66,8 @@ const initialState = loadFromStorage() || {
   metallographyRecords: mockMetallographyRecords,
   hardnessRecords: mockHardnessRecords,
   deformationRecords: mockDeformationRecords,
+  abnormalDispositions: [],
+  batchDispositions: [],
 };
 
 interface AppState extends PersistedState {
@@ -87,6 +93,10 @@ interface AppState extends PersistedState {
 
   resetToMockData: () => void;
   clearAllData: () => void;
+
+  upsertAbnormalDisposition: (d: Omit<AbnormalDisposition, "id" | "updatedAt"> & { id?: string }) => void;
+  deleteAbnormalDispositionByBatch: (batchId: string) => void;
+  setBatchDisposition: (d: Omit<BatchDisposition, "updatedAt">) => void;
 }
 
 const generateId = (prefix: string) =>
@@ -267,11 +277,59 @@ export const useStore = create<AppState>((set, get) => ({
       metallographyRecords: mockMetallographyRecords,
       hardnessRecords: mockHardnessRecords,
       deformationRecords: mockDeformationRecords,
+      abnormalDispositions: [],
+      batchDispositions: [],
     });
     saveToStorage(get());
   },
 
   clearAllData: () => {
     localStorage.removeItem(STORAGE_KEY);
+  },
+
+  upsertAbnormalDisposition: (d) => {
+    set((state) => {
+      const now = new Date().toLocaleString();
+      const existing = state.abnormalDispositions.find(
+        (x) => (d.id && x.id === d.id) || (x.batchId === d.batchId && x.abnormalKey === d.abnormalKey)
+      );
+      let newList: AbnormalDisposition[];
+      if (existing) {
+        newList = state.abnormalDispositions.map((x) =>
+          x.id === existing.id ? { ...x, ...d, id: existing.id, updatedAt: now } : x
+        );
+      } else {
+        newList = [
+          ...state.abnormalDispositions,
+          { ...d, id: d.id || generateId("ad"), updatedAt: now },
+        ];
+      }
+      return { abnormalDispositions: newList };
+    });
+    saveToStorage(get());
+  },
+
+  deleteAbnormalDispositionByBatch: (batchId) => {
+    set((state) => ({
+      abnormalDispositions: state.abnormalDispositions.filter((x) => x.batchId !== batchId),
+    }));
+    saveToStorage(get());
+  },
+
+  setBatchDisposition: (d) => {
+    set((state) => {
+      const now = new Date().toLocaleString();
+      const existing = state.batchDispositions.find((x) => x.batchId === d.batchId);
+      let newList: BatchDisposition[];
+      if (existing) {
+        newList = state.batchDispositions.map((x) =>
+          x.batchId === d.batchId ? { ...x, ...d, updatedAt: now } : x
+        );
+      } else {
+        newList = [...state.batchDispositions, { ...d, updatedAt: now }];
+      }
+      return { batchDispositions: newList };
+    });
+    saveToStorage(get());
   },
 }));
