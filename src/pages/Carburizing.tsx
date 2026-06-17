@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore } from "@/store";
-import { cn, formatDateTime, resultMap } from "@/utils";
+import { cn, formatDateTime, resultMap, validateNumberArray, safeAvg } from "@/utils";
 import {
   Plus,
   Search,
@@ -15,6 +15,7 @@ import {
   FileText,
   Ruler,
   Activity,
+  AlertCircle,
 } from "lucide-react";
 import {
   LineChart,
@@ -48,6 +49,9 @@ export default function Carburizing() {
     remark: "",
   });
 
+  const [layerDepthsInput, setLayerDepthsInput] = useState("0.9, 0.95, 1.0, 1.05, 0.98");
+  const [layerDepthsError, setLayerDepthsError] = useState<string>("");
+
   const filtered = carburizingRecords.filter((r) => {
     const b = furnaceBatches.find((f) => f.id === r.batchId);
     return (
@@ -62,20 +66,35 @@ export default function Carburizing() {
       alert("请选择批次并填写操作员");
       return;
     }
+
+    const layerValidation = validateNumberArray(layerDepthsInput, 3, 0.1, 10);
+    if (!layerValidation.valid) {
+      setLayerDepthsError(layerValidation.error || "渗碳层深度数据无效");
+      return;
+    }
+    setLayerDepthsError("");
+
     const now = new Date().toLocaleString();
+    const targetTemp = isNaN(form.targetTemp) ? 920 : Number(form.targetTemp);
     const points = [];
     for (let i = 0; i < 12; i++) {
       const t = i * 30;
       let temp;
-      if (i < 3) temp = 20 + (form.targetTemp - 20) * (i / 3) + (Math.random() - 0.5) * 10;
-      else if (i < 10) temp = form.targetTemp + (Math.random() - 0.5) * 8;
-      else temp = form.targetTemp - 50 * (i - 10);
+      if (i < 3) temp = 20 + (targetTemp - 20) * (i / 3) + (Math.random() - 0.5) * 10;
+      else if (i < 10) temp = targetTemp + (Math.random() - 0.5) * 8;
+      else temp = targetTemp - 50 * (i - 10);
       points.push({ time: t, temp: Math.max(20, Math.round(temp)) });
     }
     addCarburizingRecord({
       ...form,
+      layerDepths: layerValidation.values,
       tempCurve: points,
       recordTime: now,
+      startTemp: isNaN(form.startTemp) ? 25 : Number(form.startTemp),
+      quenchingMediumTemp: isNaN(form.quenchingMediumTemp) ? 60 : Number(form.quenchingMediumTemp),
+      oilTankStartTemp: isNaN(form.oilTankStartTemp) ? 40 : Number(form.oilTankStartTemp),
+      oilTankEndTemp: isNaN(form.oilTankEndTemp) ? 80 : Number(form.oilTankEndTemp),
+      coolingDuration: isNaN(form.coolingDuration) ? 45 : Number(form.coolingDuration),
     });
     setShowModal(false);
   };
@@ -291,7 +310,7 @@ export default function Carburizing() {
                   <div className="flex flex-col items-center ml-4">
                     <div className="text-[10px] text-green-600 mb-1">平均</div>
                     <div className="w-20 h-10 rounded-lg bg-green-100 border border-green-200 flex items-center justify-center font-bold text-green-700 text-sm">
-                      {(viewing.layerDepths.reduce((a: number, b: number) => a + b, 0) / viewing.layerDepths.length).toFixed(2)}
+                      {safeAvg(viewing.layerDepths).toFixed(2)}
                     </div>
                   </div>
                 </div>
@@ -406,18 +425,30 @@ export default function Carburizing() {
                 </div>
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1.5">渗碳层深度测量 (mm)，用逗号分隔</label>
+                <label className="block text-xs font-medium text-slate-600 mb-1.5">
+                  渗碳层深度测量 (mm)，用逗号分隔 *
+                </label>
                 <input
-                  value={form.layerDepths.join(", ")}
-                  onChange={(e) =>
-                    setForm({
-                      ...form,
-                      layerDepths: e.target.value.split(",").map((s) => parseFloat(s.trim())).filter((n) => !isNaN(n)),
-                    })
-                  }
-                  className="input-base font-mono"
+                  value={layerDepthsInput}
+                  onChange={(e) => {
+                    setLayerDepthsInput(e.target.value);
+                    if (layerDepthsError) setLayerDepthsError("");
+                  }}
+                  className={cn(
+                    "input-base font-mono",
+                    layerDepthsError && "border-red-300 focus:ring-red-200 focus:border-red-400"
+                  )}
                   placeholder="0.9, 0.95, 1.0, 1.05, 0.98"
                 />
+                {layerDepthsError && (
+                  <div className="text-[11px] text-red-500 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-3 h-3" />
+                    {layerDepthsError}
+                  </div>
+                )}
+                <div className="text-[10px] text-slate-400 mt-1">
+                  至少输入 3 个有效值，范围 0.1-10mm，当前 {validateNumberArray(layerDepthsInput).values.length} 个有效数值
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-medium text-slate-600 mb-1.5">备注</label>

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useStore } from "@/store";
-import { resultMap, cn, formatDateTime } from "@/utils";
+import { resultMap, cn, formatDateTime, validateNumberArray, safeAvg } from "@/utils";
 import {
   Plus,
   Search,
@@ -11,6 +11,7 @@ import {
   Target,
   BarChart3,
   TrendingUp,
+  AlertCircle,
 } from "lucide-react";
 import {
   BarChart,
@@ -41,6 +42,11 @@ export default function Hardness() {
     remark: "",
   });
 
+  const [surfaceInput, setSurfaceInput] = useState("58, 59, 60, 59.5, 58.5");
+  const [coreInput, setCoreInput] = useState("35, 36, 38, 37, 36");
+  const [surfaceError, setSurfaceError] = useState("");
+  const [coreError, setCoreError] = useState("");
+
   const filtered = hardnessRecords.filter((r) => {
     const b = furnaceBatches.find((f) => f.id === r.batchId);
     const match = !search || r.sampleNo.includes(search) || r.partNo.includes(search) || (b && b.batchNo.includes(search));
@@ -57,10 +63,27 @@ export default function Hardness() {
       alert("请填写必填项");
       return;
     }
-    const surfaceAvg = Number((form.surfaceValues.reduce((a, b) => a + b, 0) / form.surfaceValues.length).toFixed(1));
-    const coreAvg = Number((form.coreValues.reduce((a, b) => a + b, 0) / form.coreValues.length).toFixed(1));
+
+    const surfaceVal = validateNumberArray(surfaceInput, 3, 20, 90);
+    if (!surfaceVal.valid) {
+      setSurfaceError(surfaceVal.error || "表面硬度数据无效");
+      return;
+    }
+    setSurfaceError("");
+
+    const coreVal = validateNumberArray(coreInput, 3, 10, 80);
+    if (!coreVal.valid) {
+      setCoreError(coreVal.error || "心部硬度数据无效");
+      return;
+    }
+    setCoreError("");
+
+    const surfaceAvg = safeAvg(surfaceVal.values);
+    const coreAvg = safeAvg(coreVal.values);
     addHardnessRecord({
       ...form,
+      surfaceValues: surfaceVal.values,
+      coreValues: coreVal.values,
       surfaceAvg,
       coreAvg,
       recordTime: new Date().toLocaleString(),
@@ -73,8 +96,8 @@ export default function Hardness() {
       <div className="grid grid-cols-4 gap-4">
         {[
           { label: "检测总数", value: hardnessRecords.length, unit: "件", icon: Gauge, color: "from-blue-500 to-indigo-500" },
-          { label: "平均表面硬度", value: (hardnessRecords.reduce((a, b) => a + b.surfaceAvg, 0) / (hardnessRecords.length || 1)).toFixed(1), unit: "HRC", icon: Target, color: "from-emerald-500 to-teal-500" },
-          { label: "平均心部硬度", value: (hardnessRecords.reduce((a, b) => a + b.coreAvg, 0) / (hardnessRecords.length || 1)).toFixed(1), unit: "HRC", icon: TrendingUp, color: "from-amber-500 to-orange-500" },
+          { label: "平均表面硬度", value: safeAvg(hardnessRecords.map((r) => r.surfaceAvg)).toFixed(1), unit: "HRC", icon: Target, color: "from-emerald-500 to-teal-500" },
+          { label: "平均心部硬度", value: safeAvg(hardnessRecords.map((r) => r.coreAvg)).toFixed(1), unit: "HRC", icon: TrendingUp, color: "from-amber-500 to-orange-500" },
           { label: "合格率", value: passRate, unit: "%", icon: BarChart3, color: "from-green-500 to-emerald-500" },
         ].map((s, i) => {
           const Icon = s.icon;
@@ -334,30 +357,46 @@ export default function Hardness() {
                   </select>
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">表面硬度5点检测值 (HRC，逗号分隔)</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">表面硬度5点检测值 (HRC，逗号分隔) *</label>
                   <input
-                    value={form.surfaceValues.join(", ")}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        surfaceValues: e.target.value.split(",").map((s) => parseFloat(s.trim())).filter((n) => !isNaN(n)),
-                      })
-                    }
-                    className="input-base font-mono"
+                    value={surfaceInput}
+                    onChange={(e) => {
+                      setSurfaceInput(e.target.value);
+                      if (surfaceError) setSurfaceError("");
+                    }}
+                    className={cn("input-base font-mono", surfaceError && "border-red-300 focus:ring-red-200")}
+                    placeholder="58, 59, 60, 59.5, 58.5"
                   />
+                  {surfaceError && (
+                    <div className="text-[11px] text-red-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {surfaceError}
+                    </div>
+                  )}
+                  <div className="text-[10px] text-slate-400 mt-1">
+                    至少输入 3 个有效值，范围 20-90HRC，当前 {validateNumberArray(surfaceInput).values.length} 个有效
+                  </div>
                 </div>
                 <div className="col-span-2">
-                  <label className="block text-xs font-medium text-slate-600 mb-1.5">心部硬度5点检测值 (HRC，逗号分隔)</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1.5">心部硬度5点检测值 (HRC，逗号分隔) *</label>
                   <input
-                    value={form.coreValues.join(", ")}
-                    onChange={(e) =>
-                      setForm({
-                        ...form,
-                        coreValues: e.target.value.split(",").map((s) => parseFloat(s.trim())).filter((n) => !isNaN(n)),
-                      })
-                    }
-                    className="input-base font-mono"
+                    value={coreInput}
+                    onChange={(e) => {
+                      setCoreInput(e.target.value);
+                      if (coreError) setCoreError("");
+                    }}
+                    className={cn("input-base font-mono", coreError && "border-red-300 focus:ring-red-200")}
+                    placeholder="35, 36, 38, 37, 36"
                   />
+                  {coreError && (
+                    <div className="text-[11px] text-red-500 mt-1 flex items-center gap-1">
+                      <AlertCircle className="w-3 h-3" />
+                      {coreError}
+                    </div>
+                  )}
+                  <div className="text-[10px] text-slate-400 mt-1">
+                    至少输入 3 个有效值，范围 10-80HRC，当前 {validateNumberArray(coreInput).values.length} 个有效
+                  </div>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-slate-600 mb-1.5">检验员 *</label>

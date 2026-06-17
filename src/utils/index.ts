@@ -40,3 +40,40 @@ export const formatDateTime = (str?: string) => {
   if (!str) return "-";
   return str;
 };
+
+export const parseNumberArray = (input: string): number[] => {
+  if (!input || input.trim() === "") return [];
+  return input
+    .split(/[,，\s]+/)
+    .map((s) => s.trim())
+    .filter((s) => s !== "")
+    .map((s) => parseFloat(s))
+    .filter((n) => !isNaN(n) && isFinite(n) && n !== null && n !== undefined);
+};
+
+export const safeAvg = (arr: number[]): number => {
+  if (!arr || arr.length === 0) return 0;
+  const valid = arr.filter((n) => !isNaN(n) && isFinite(n));
+  if (valid.length === 0) return 0;
+  const sum = valid.reduce((a, b) => a + b, 0);
+  return Math.round((sum / valid.length) * 100) / 100;
+};
+
+export const validateNumberArray = (
+  input: string,
+  minCount: number = 1,
+  min?: number,
+  max?: number
+): { valid: boolean; values: number[]; error?: string } => {
+  const values = parseNumberArray(input);
+  if (values.length < minCount) {
+    return { valid: false, values, error: `至少需要 ${minCount} 个有效数值` };
+  }
+  if (min !== undefined && values.some((v) => v < min)) {
+    return { valid: false, values, error: `存在数值小于最小值 ${min}` };
+  }
+  if (max !== undefined && values.some((v) => v > max)) {
+    return { valid: false, values, error: `存在数值大于最大值 ${max}` };
+  }
+  return { valid: true, values };
+};
