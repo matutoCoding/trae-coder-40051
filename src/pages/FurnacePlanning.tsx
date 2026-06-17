@@ -18,13 +18,14 @@ import {
 } from "lucide-react";
 
 export default function FurnacePlanning() {
-  const { furnaceBatches, partItems, processCards, addFurnaceBatch, addPartItem, deletePartItem, deleteFurnaceBatch } = useStore();
+  const { furnaceBatches, partItems, processCards, addFurnaceBatch, addPartItem, deletePartItem, deleteFurnaceBatch, updatePartItem } = useStore();
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [showPartModal, setShowPartModal] = useState(false);
   const [currentBatchId, setCurrentBatchId] = useState<string | null>(null);
+  const [editingPartId, setEditingPartId] = useState<string | null>(null);
   const [batchForm, setBatchForm] = useState({
     furnaceNo: "RC-01",
     batchNo: "",
@@ -84,19 +85,42 @@ export default function FurnacePlanning() {
 
   const openAddPart = (batchId: string) => {
     setCurrentBatchId(batchId);
+    setEditingPartId(null);
     setPartForm({ partNo: "", partName: "", quantity: 0, position: "", customer: "", drawingNo: "" });
+    setShowPartModal(true);
+  };
+
+  const openEditPart = (part: any) => {
+    setCurrentBatchId(part.batchId);
+    setEditingPartId(part.id);
+    setPartForm({
+      partNo: part.partNo,
+      partName: part.partName,
+      quantity: part.quantity,
+      position: part.position || "",
+      customer: part.customer || "",
+      drawingNo: part.drawingNo || "",
+    });
     setShowPartModal(true);
   };
 
   const savePart = () => {
     if (!partForm.partNo || !partForm.partName || !partForm.quantity) {
-      alert("请填写完整零件信息");
+      alert("请填写完整零件信息（零件号、名称、数量）");
       return;
     }
-    if (currentBatchId) {
-      addPartItem({ ...partForm, batchId: currentBatchId });
+    const qty = Number(partForm.quantity);
+    if (isNaN(qty) || qty <= 0) {
+      alert("请输入有效的数量");
+      return;
+    }
+    if (editingPartId) {
+      updatePartItem(editingPartId, { ...partForm, quantity: qty });
+    } else if (currentBatchId) {
+      addPartItem({ ...partForm, batchId: currentBatchId, quantity: qty });
     }
     setShowPartModal(false);
+    setEditingPartId(null);
   };
 
   const batchParts = (id: string) => partItems.filter((p) => p.batchId === id);
@@ -285,15 +309,28 @@ export default function FurnacePlanning() {
                                   {p.position}
                                 </td>
                                 <td className="table-cell text-right">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (confirm("确定移除该零件?")) deletePartItem(p.id);
-                                    }}
-                                    className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-500"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
+                                  <div className="flex items-center justify-end gap-1">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        openEditPart(p);
+                                      }}
+                                      className="p-1.5 rounded hover:bg-blue-50 text-slate-400 hover:text-blue-500"
+                                      title="编辑零件"
+                                    >
+                                      <Edit2 className="w-3.5 h-3.5" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (confirm("确定移除该零件?")) deletePartItem(p.id);
+                                      }}
+                                      className="p-1.5 rounded hover:bg-red-50 text-slate-400 hover:text-red-500"
+                                      title="移除零件"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
                             ))}
@@ -406,7 +443,7 @@ export default function FurnacePlanning() {
 
       {showPartModal && (
         <Modal
-          title="添加装炉零件"
+          title={editingPartId ? "编辑装炉零件" : "添加装炉零件"}
           icon={Package}
           onClose={() => setShowPartModal(false)}
           onSave={savePart}

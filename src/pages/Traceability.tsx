@@ -21,6 +21,13 @@ import {
   XCircle,
   History,
   Share2,
+  BarChart2,
+  List,
+  ChevronDown,
+  ChevronUp,
+  TrendingDown,
+  TrendingUp as TrendingUpIcon,
+  AlertCircle,
 } from "lucide-react";
 
 
@@ -28,6 +35,8 @@ export default function Traceability() {
   const { furnaceBatches, partItems, carburizingRecords, temperingRecords, metallographyRecords, hardnessRecords, deformationRecords, processCards } = useStore();
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(furnaceBatches[0]?.id || null);
+  const [viewMode, setViewMode] = useState<"detail" | "compare">("detail");
+  const [compareIds, setCompareIds] = useState<string[]>([]);
 
   const filtered = furnaceBatches.filter(
     (b) =>
@@ -290,6 +299,77 @@ export default function Traceability() {
       content += "  所有环节数据完整\n";
     }
     content += "\n";
+
+    const abnormalItems: string[] = [];
+    const failMetallography = metallography.filter((m) => m.result === "fail");
+    const failHardness = hardness.filter((h) => h.result === "fail");
+    const failDeformation = deformation.filter((d) => d.result === "fail");
+
+    if (processCard && carburizing) {
+      const avgDepth = safeAvg(carburizing.layerDepths);
+      if (avgDepth < processCard.layerDepthMin) {
+        abnormalItems.push(`[渗碳层深偏低] 平均值 ${avgDepth.toFixed(3)}mm < 下限 ${processCard.layerDepthMin}mm`);
+      }
+      if (avgDepth > processCard.layerDepthMax) {
+        abnormalItems.push(`[渗碳层深偏高] 平均值 ${avgDepth.toFixed(3)}mm > 上限 ${processCard.layerDepthMax}mm`);
+      }
+      carburizing.layerDepths.forEach((d, i) => {
+        if (d < processCard.layerDepthMin) {
+          abnormalItems.push(`[渗碳层深偏低] 测点#${i + 1}: ${d.toFixed(3)}mm < 下限`);
+        }
+        if (d > processCard.layerDepthMax) {
+          abnormalItems.push(`[渗碳层深偏高] 测点#${i + 1}: ${d.toFixed(3)}mm > 上限`);
+        }
+      });
+    }
+
+    if (processCard && hardness.length > 0) {
+      hardness.forEach((h, i) => {
+        if (h.surfaceAvg < processCard.hardnessMin) {
+          abnormalItems.push(`[表面硬度偏低] 试样${h.sampleNo}: ${h.surfaceAvg}HRC < 下限 ${processCard.hardnessMin}HRC`);
+        }
+        if (h.surfaceAvg > processCard.hardnessMax) {
+          abnormalItems.push(`[表面硬度偏高] 试样${h.sampleNo}: ${h.surfaceAvg}HRC > 上限 ${processCard.hardnessMax}HRC`);
+        }
+      });
+    }
+
+    failMetallography.forEach((m) => {
+      abnormalItems.push(`[金相不合格] 试样${m.sampleNo} (${m.partNo}) - 马氏体${m.martensiteLevel}`);
+    });
+    failHardness.forEach((h) => {
+      abnormalItems.push(`[硬度不合格] 试样${h.sampleNo} - 表面${h.surfaceAvg}HRC / 心部${h.coreAvg}HRC`);
+    });
+    failDeformation.forEach((d) => {
+      abnormalItems.push(`[变形矫正不合格] 零件${d.partNo} ${d.measurementPoint} - 复检${d.recheckValue}mm`);
+    });
+
+    content += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+    content += "十、异常汇总\n";
+    content += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n";
+
+    if (missingSteps.length > 0) {
+      content += `  缺失环节 (${missingSteps.length}项):\n`;
+      missingSteps.forEach((s) => {
+        content += `    ⚠ ${s.label}: ${s.data.desc}\n`;
+      });
+      content += "\n";
+    }
+
+    if (abnormalItems.length > 0) {
+      content += `  检测异常 (${abnormalItems.length}项):\n`;
+      abnormalItems.forEach((item, i) => {
+        content += `    ✗ ${item}\n`;
+      });
+    } else {
+      content += "  ✓ 未发现异常项\n";
+    }
+
+    if (missingSteps.length === 0 && abnormalItems.length === 0) {
+      content += "\n  ★ 该炉次数据完整，质量合格，无异常\n";
+    }
+
+    content += "\n";
     content += "============================================================\n";
     content += "                   档案结束\n";
     content += "============================================================\n";
@@ -308,7 +388,7 @@ export default function Traceability() {
   return (
     <div className="space-y-5">
       <div className="card-base">
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-4 flex-wrap">
           <div className="relative flex-1 max-w-xl">
             <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -318,12 +398,57 @@ export default function Traceability() {
               className="w-full pl-12 pr-4 py-3 rounded-xl border-2 border-slate-200 focus:border-primary-500 focus:outline-none text-sm bg-slate-50 focus:bg-white transition-all"
             />
           </div>
+          <div className="flex items-center bg-slate-100 rounded-lg p-1">
+            <button
+              onClick={() => setViewMode("detail")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium transition-all",
+                viewMode === "detail"
+                  ? "bg-white text-primary-600 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              <List className="w-4 h-4" />
+              详情追溯
+            </button>
+            <button
+              onClick={() => setViewMode("compare")}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium transition-all",
+                viewMode === "compare"
+                  ? "bg-white text-primary-600 shadow-sm"
+                  : "text-slate-500 hover:text-slate-700"
+              )}
+            >
+              <BarChart2 className="w-4 h-4" />
+              批次对比
+              {compareIds.length > 0 && (
+                <span className="ml-1 w-5 h-5 rounded-full bg-primary-500 text-white text-[10px] flex items-center justify-center">
+                  {compareIds.length}
+                </span>
+              )}
+            </button>
+          </div>
           <button className="btn-primary !py-3 !px-6">
             <FileSearch className="w-5 h-5" />
             追溯查询
           </button>
         </div>
-        {search && (
+        {viewMode === "compare" && compareIds.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between">
+            <div className="text-sm text-slate-600">
+              已选择 <span className="font-bold text-primary-600">{compareIds.length}</span> 个炉次进行对比
+              {compareIds.length < 2 && <span className="text-amber-600 text-xs ml-2">（至少选择 2 个炉次才有对比意义）</span>}
+            </div>
+            <button
+              onClick={() => setCompareIds([])}
+              className="text-xs text-slate-500 hover:text-slate-700"
+            >
+              清空选择
+            </button>
+          </div>
+        )}
+        {search && viewMode === "detail" && (
           <div className="mt-4 pt-4 border-t border-slate-100 text-sm text-slate-600">
             找到 <span className="font-bold text-primary-600">{filtered.length}</span> 条匹配的炉次记录
           </div>
@@ -331,37 +456,76 @@ export default function Traceability() {
       </div>
 
       <div className="grid grid-cols-12 gap-5">
-        <div className="col-span-4">
+        <div className={cn(viewMode === "compare" ? "col-span-4" : "col-span-4")}>
           <div className="card-base h-[calc(100vh-280px)] overflow-hidden flex flex-col">
             <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
               <Package className="w-4 h-4 text-primary-600" />
-              炉次列表
+              {viewMode === "compare" ? "选择对比炉次" : "炉次列表"}
+              {viewMode === "compare" && (
+                <span className="ml-auto text-xs text-slate-400 font-normal">
+                  已选 {compareIds.length}
+                </span>
+              )}
             </h3>
             <div className="flex-1 overflow-y-auto space-y-2 -mx-2 px-2">
               {filtered.map((b) => {
                 const st = statusMap[b.status];
                 const isSelected = b.id === selectedId;
+                const isCompareSelected = compareIds.includes(b.id);
+
+                const handleClick = () => {
+                  if (viewMode === "compare") {
+                    if (isCompareSelected) {
+                      setCompareIds(compareIds.filter((id) => id !== b.id));
+                    } else {
+                      setCompareIds([...compareIds, b.id]);
+                    }
+                  } else {
+                    setSelectedId(b.id);
+                  }
+                };
+
                 return (
                   <div
                     key={b.id}
-                    onClick={() => setSelectedId(b.id)}
+                    onClick={handleClick}
                     className={cn(
                       "p-3 rounded-lg border cursor-pointer transition-all",
-                      isSelected
-                        ? "border-primary-500 bg-primary-50 shadow-sm"
-                        : "border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50"
+                      viewMode === "compare"
+                        ? isCompareSelected
+                          ? "border-primary-500 bg-primary-50 shadow-sm ring-2 ring-primary-200"
+                          : "border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50"
+                        : isSelected
+                          ? "border-primary-500 bg-primary-50 shadow-sm"
+                          : "border-slate-100 bg-white hover:border-slate-200 hover:bg-slate-50"
                     )}
                   >
-                    <div className="flex items-start justify-between mb-1.5">
-                      <div className="font-mono font-semibold text-sm text-primary-600">{b.batchNo}</div>
-                      <span className={cn("badge !text-[10px] !px-2", st.bgColor, st.color)}>
-                        {st.label}
-                      </span>
-                    </div>
-                    <div className="text-xs text-slate-500 mb-2">{b.furnaceNo} | {b.processCardName}</div>
-                    <div className="flex items-center justify-between text-[10px] text-slate-400">
-                      <span>{b.totalQuantity}件</span>
-                      <span>{formatDateTime(b.startTime)}</span>
+                    <div className="flex items-start gap-2.5 mb-1.5">
+                      {viewMode === "compare" && (
+                        <div className={cn(
+                          "w-4 h-4 mt-0.5 rounded border-2 flex items-center justify-center shrink-0 transition-all",
+                          isCompareSelected
+                            ? "bg-primary-500 border-primary-500"
+                            : "border-slate-300 bg-white"
+                        )}>
+                          {isCompareSelected && (
+                            <CheckCircle2 className="w-3 h-3 text-white" />
+                          )}
+                        </div>
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="font-mono font-semibold text-sm text-primary-600 truncate">{b.batchNo}</div>
+                          <span className={cn("badge !text-[10px] !px-2 shrink-0", st.bgColor, st.color)}>
+                            {st.label}
+                          </span>
+                        </div>
+                        <div className="text-xs text-slate-500 mb-1.5 truncate">{b.furnaceNo} | {b.processCardName}</div>
+                        <div className="flex items-center justify-between text-[10px] text-slate-400">
+                          <span>{b.totalQuantity} 件</span>
+                          <span>{formatDateTime(b.startTime)}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );
@@ -377,7 +541,7 @@ export default function Traceability() {
         </div>
 
         <div className="col-span-8 space-y-5">
-          {selected ? (
+          {viewMode === "detail" && selected ? (
             <>
               <div className="card-base">
                 <div className="flex items-center justify-between mb-5">
@@ -780,12 +944,22 @@ export default function Traceability() {
                 </div>
               )}
             </>
-          ) : (
+          ) : viewMode === "detail" && !selected ? (
             <div className="card-base h-[calc(100vh-280px)] flex flex-col items-center justify-center text-slate-400">
               <FileSearch className="w-20 h-20 mb-4 opacity-20" />
               <div className="text-lg font-medium">请从左侧选择炉次查看追溯详情</div>
               <div className="text-sm mt-1">支持按批次号、零件号搜索筛选</div>
             </div>
+          ) : (
+            compareIds.length > 0 ? (
+              <BatchCompareView compareIds={compareIds} />
+            ) : (
+              <div className="card-base h-[calc(100vh-280px)] flex flex-col items-center justify-center text-slate-400">
+                <BarChart2 className="w-20 h-20 mb-4 opacity-20" />
+                <div className="text-lg font-medium">请从左侧选择至少2个炉次进行对比</div>
+                <div className="text-sm mt-1">勾选左侧炉次列表中的复选框</div>
+              </div>
+            )
           )}
         </div>
       </div>
@@ -827,6 +1001,281 @@ function TraceSection({
         {badge}
       </div>
       {children}
+    </div>
+  );
+}
+
+function BatchCompareView({ compareIds }: { compareIds: string[] }) {
+  const {
+    furnaceBatches,
+    processCards,
+    partItems,
+    carburizingRecords,
+    temperingRecords,
+    metallographyRecords,
+    hardnessRecords,
+  } = useStore();
+
+  const batches = furnaceBatches.filter((b) => compareIds.includes(b.id));
+
+  const batchData = batches.map((batch) => {
+    const parts = partItems.filter((p) => p.batchId === batch.id);
+    const processCard = processCards.find((c) => c.id === batch.processCardId);
+    const carburizing = carburizingRecords.find((r) => r.batchId === batch.id);
+    const tempering = temperingRecords.find((r) => r.batchId === batch.id);
+    const metallography = metallographyRecords.filter((r) => r.batchId === batch.id);
+    const hardness = hardnessRecords.filter((r) => r.batchId === batch.id);
+
+    const totalQty = parts.reduce((sum, p) => sum + p.quantity, 0);
+    const avgLayerDepth = carburizing ? safeAvg(carburizing.layerDepths).toFixed(2) : "-";
+    const avgSurfaceHardness = hardness.length > 0
+      ? safeAvg(hardness.map((h) => h.surfaceAvg)).toFixed(1)
+      : "-";
+    const avgCoreHardness = hardness.length > 0
+      ? safeAvg(hardness.map((h) => h.coreAvg)).toFixed(1)
+      : "-";
+
+    const passCount = metallography.filter((m) => m.result === "pass").length +
+      hardness.filter((h) => h.result === "pass").length;
+    const totalCount = metallography.length + hardness.length;
+    const passRate = totalCount > 0 ? ((passCount / totalCount) * 100).toFixed(1) : "-";
+
+    let isAbnormal = false;
+    const abnormalReasons: string[] = [];
+
+    if (processCard && carburizing) {
+      const avgDepth = safeAvg(carburizing.layerDepths);
+      if (avgDepth < processCard.layerDepthMin || avgDepth > processCard.layerDepthMax) {
+        isAbnormal = true;
+        abnormalReasons.push("渗碳层深超范围");
+      }
+    }
+
+    if (processCard && hardness.length > 0) {
+      const avgSurf = safeAvg(hardness.map((h) => h.surfaceAvg));
+      if (avgSurf < processCard.hardnessMin || avgSurf > processCard.hardnessMax) {
+        isAbnormal = true;
+        abnormalReasons.push("表面硬度超范围");
+      }
+    }
+
+    if (metallography.some((m) => m.result === "fail") || hardness.some((h) => h.result === "fail")) {
+      isAbnormal = true;
+      abnormalReasons.push("有不合格项");
+    }
+
+    return {
+      batch,
+      parts,
+      processCard,
+      carburizing,
+      tempering,
+      metallography,
+      hardness,
+      totalQty,
+      partCount: parts.length,
+      avgLayerDepth,
+      avgSurfaceHardness,
+      avgCoreHardness,
+      passRate,
+      isAbnormal,
+      abnormalReasons,
+    };
+  });
+
+  return (
+    <div className="space-y-5">
+      <div className="card-base">
+        <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg border flex items-center justify-center text-primary-600 bg-primary-50 border-primary-100">
+              <BarChart2 className="w-4 h-4" />
+            </div>
+            <h4 className="text-sm font-bold text-slate-800">批次对比分析</h4>
+            <span className="text-xs text-slate-400">共 {batches.length} 个炉次</span>
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="w-3 h-3 rounded bg-red-100 border border-red-300" />
+            <span className="text-slate-500">异常批次</span>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto -mx-4 px-4">
+          <table className="w-full min-w-[800px]">
+            <thead>
+              <tr className="border-b-2 border-slate-100">
+                <th className="text-left py-3 px-3 text-xs font-semibold text-slate-500 sticky left-0 bg-white">批次号</th>
+                <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500">状态</th>
+                <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500">工艺编号</th>
+                <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500">零件种类</th>
+                <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500">装炉数量</th>
+                <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500">渗碳层深(mm)</th>
+                <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500">表面硬度(HRC)</th>
+                <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500">心部硬度(HRC)</th>
+                <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500">合格率</th>
+                <th className="text-center py-3 px-3 text-xs font-semibold text-slate-500">异常</th>
+              </tr>
+            </thead>
+            <tbody>
+              {batchData.map((bd) => (
+                <tr
+                  key={bd.batch.id}
+                  className={cn(
+                    "border-b border-slate-50 transition-colors",
+                    bd.isAbnormal ? "bg-red-50/50 hover:bg-red-50" : "hover:bg-slate-50"
+                  )}
+                >
+                  <td className="py-3 px-3 sticky left-0 bg-inherit">
+                    <div className="font-mono text-sm font-semibold text-primary-600">{bd.batch.batchNo}</div>
+                    <div className="text-[10px] text-slate-400">{bd.batch.startTime}</div>
+                  </td>
+                  <td className="py-3 px-3 text-center">
+                    <span className={cn(
+                      "inline-block px-2 py-0.5 rounded-full text-[10px] font-medium",
+                      statusMap[bd.batch.status].bgColor,
+                      statusMap[bd.batch.status].color
+                    )}>
+                      {statusMap[bd.batch.status].label}
+                    </span>
+                  </td>
+                  <td className="py-3 px-3 text-center text-xs font-mono text-slate-600">
+                    {bd.processCard?.code || "-"}
+                  </td>
+                  <td className="py-3 px-3 text-center text-sm font-medium text-slate-700">
+                    {bd.partCount}
+                  </td>
+                  <td className="py-3 px-3 text-center">
+                    <span className="text-sm font-bold text-blue-600">{bd.totalQty}</span>
+                    <span className="text-[10px] text-slate-400 ml-1">件</span>
+                  </td>
+                  <td className="py-3 px-3 text-center">
+                    <span className={cn(
+                      "text-sm font-mono font-semibold",
+                      bd.abnormalReasons.includes("渗碳层深超范围") ? "text-red-600" : "text-purple-600"
+                    )}>
+                      {bd.avgLayerDepth}
+                    </span>
+                  </td>
+                  <td className="py-3 px-3 text-center">
+                    <span className={cn(
+                      "text-sm font-mono font-semibold",
+                      bd.abnormalReasons.includes("表面硬度超范围") ? "text-red-600" : "text-emerald-600"
+                    )}>
+                      {bd.avgSurfaceHardness}
+                    </span>
+                  </td>
+                  <td className="py-3 px-3 text-center text-sm font-mono text-amber-600 font-semibold">
+                    {bd.avgCoreHardness}
+                  </td>
+                  <td className="py-3 px-3 text-center">
+                    <span className={cn(
+                      "text-sm font-bold",
+                      bd.passRate !== "-" && Number(bd.passRate) < 80 ? "text-red-600" :
+                      bd.passRate !== "-" && Number(bd.passRate) < 95 ? "text-amber-600" : "text-green-600"
+                    )}>
+                      {bd.passRate}{bd.passRate !== "-" && "%"}
+                    </span>
+                  </td>
+                  <td className="py-3 px-3 text-center">
+                    {bd.isAbnormal ? (
+                      <div className="flex items-center justify-center gap-1 text-red-600">
+                        <AlertCircle className="w-4 h-4" />
+                        <span className="text-xs font-medium">{bd.abnormalReasons.length}项</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center gap-1 text-green-500">
+                        <CheckCircle2 className="w-4 h-4" />
+                        <span className="text-xs font-medium">正常</span>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {batchData.some((bd) => bd.isAbnormal) && (
+        <div className="card-base border-red-200 bg-red-50/30">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-lg bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div className="flex-1">
+              <h4 className="text-sm font-bold text-red-800 mb-3">异常批次汇总</h4>
+              <div className="space-y-3">
+                {batchData.filter((bd) => bd.isAbnormal).map((bd) => (
+                  <div key={bd.batch.id} className="p-3 rounded-lg bg-white/70 border border-red-100">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="font-mono text-sm font-semibold text-red-600">{bd.batch.batchNo}</span>
+                      <span className="text-xs text-slate-400">{bd.batch.startTime}</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {bd.abnormalReasons.map((reason, i) => (
+                        <span key={i} className="px-2 py-0.5 rounded bg-red-100 text-red-700 text-[10px] font-medium">
+                          {reason}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="card-base">
+        <div className="flex items-center gap-2.5 mb-4 pb-3 border-b border-slate-100">
+          <div className="w-8 h-8 rounded-lg border flex items-center justify-center text-blue-600 bg-blue-50 border-blue-100">
+            <Flame className="w-4 h-4" />
+          </div>
+          <h4 className="text-sm font-bold text-slate-800">工艺参数对比</h4>
+        </div>
+        <div className="overflow-x-auto -mx-4 px-4">
+          <table className="w-full min-w-[700px]">
+            <thead>
+              <tr className="border-b-2 border-slate-100">
+                <th className="text-left py-2.5 px-3 text-xs font-semibold text-slate-500 sticky left-0 bg-white w-32">参数</th>
+                {batchData.map((bd) => (
+                  <th
+                    key={bd.batch.id}
+                    className={cn(
+                      "text-center py-2.5 px-3 text-xs font-semibold",
+                      bd.isAbnormal ? "text-red-600" : "text-slate-500"
+                    )}
+                  >
+                    {bd.batch.batchNo}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {[
+                { label: "材料牌号", key: "material", get: (bd: any) => bd.processCard?.material || "-" },
+                { label: "渗碳温度", key: "carbTemp", get: (bd: any) => bd.processCard ? `${bd.processCard.carburizingTemp}℃` : "-" },
+                { label: "渗碳时间", key: "carbTime", get: (bd: any) => bd.processCard ? `${bd.processCard.carburizingTime}min` : "-" },
+                { label: "淬火温度", key: "quenchTemp", get: (bd: any) => bd.processCard ? `${bd.processCard.quenchingTemp}℃` : "-" },
+                { label: "冷却介质", key: "medium", get: (bd: any) => bd.processCard?.quenchingMedium || "-" },
+                { label: "回火温度", key: "tempTemp", get: (bd: any) => bd.processCard ? `${bd.processCard.temperingTemp}℃` : "-" },
+                { label: "回火时间", key: "tempTime", get: (bd: any) => bd.processCard ? `${bd.processCard.temperingTime}min` : "-" },
+                { label: "层深范围", key: "depthRange", get: (bd: any) => bd.processCard ? `${bd.processCard.layerDepthMin}-${bd.processCard.layerDepthMax}mm` : "-" },
+                { label: "硬度范围", key: "hardRange", get: (bd: any) => bd.processCard ? `HRC ${bd.processCard.hardnessMin}-${bd.processCard.hardnessMax}` : "-" },
+              ].map((row) => (
+                <tr key={row.key} className="border-b border-slate-50 hover:bg-slate-50">
+                  <td className="py-2.5 px-3 text-xs text-slate-500 font-medium sticky left-0 bg-inherit">{row.label}</td>
+                  {batchData.map((bd) => (
+                    <td key={bd.batch.id} className="py-2.5 px-3 text-center text-sm text-slate-700 font-mono">
+                      {row.get(bd)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
