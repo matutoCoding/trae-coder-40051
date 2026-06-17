@@ -12,12 +12,14 @@ import {
   Factory,
   ChevronLeft,
   ChevronRight,
+  BarChart3,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/utils";
 
 const menuItems = [
   { path: "/dashboard", label: "仪表板", icon: LayoutDashboard, group: "概览" },
+  { path: "/statistics", label: "生产统计", icon: BarChart3, group: "概览" },
   { path: "/process-cards", label: "工艺卡片", icon: FileText, group: "工艺管理" },
   { path: "/furnace-planning", label: "装炉排产", icon: CalendarClock, group: "生产管理" },
   { path: "/carburizing", label: "渗碳淬火", icon: Flame, group: "生产管理" },

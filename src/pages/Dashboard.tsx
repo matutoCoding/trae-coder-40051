@@ -51,15 +51,22 @@ export default function Dashboard() {
   } = useStore();
 
   const totalBatches = furnaceBatches.length;
-  const totalPartsInProcess = partItems.reduce((sum, p) => sum + p.quantity, 0);
-  const totalPartsCount = partItems.length;
+
+  const inProcessBatchIds = furnaceBatches
+    .filter((b) => b.status !== "completed" && b.status !== "pending")
+    .map((b) => b.id);
+  const inProcessParts = partItems.filter((p) => inProcessBatchIds.includes(p.batchId));
+  const totalPartsInProcess = inProcessParts.reduce((sum, p) => sum + p.quantity, 0);
+  const totalPartsCount = inProcessParts.length;
 
   const completedBatches = furnaceBatches.filter((b) => b.status === "completed");
-  const inProcessBatches = furnaceBatches.filter((b) => b.status !== "completed" && b.status !== "pending").length;
+  const inProcessBatches = inProcessBatchIds.length;
 
-  const allHardnessTests = hardnessRecords.length;
-  const passedHardness = hardnessRecords.filter((h) => h.result === "pass").length;
-  const hardnessPassRate = allHardnessTests > 0 ? ((passedHardness / allHardnessTests) * 100).toFixed(1) : "0";
+  const allTests = hardnessRecords.length + metallographyRecords.length + deformationRecords.length;
+  const passedTests = hardnessRecords.filter((h) => h.result === "pass").length
+    + metallographyRecords.filter((m) => m.result === "pass").length
+    + deformationRecords.filter((d) => d.result === "pass").length;
+  const overallPassRate = allTests > 0 ? ((passedTests / allTests) * 100).toFixed(1) : "0";
 
   const failedTests = hardnessRecords.filter((h) => h.result === "fail").length
     + metallographyRecords.filter((m) => m.result === "fail").length
@@ -131,6 +138,45 @@ export default function Dashboard() {
     ? safeAvg(hardnessRecords.map((h) => h.surfaceAvg)).toFixed(1)
     : "0";
 
+  const checkBatchAbnormal = (batchId: string) => {
+    const reasons: string[] = [];
+    const carb = carburizingRecords.find((r) => r.batchId === batchId);
+    const temp = temperingRecords.find((r) => r.batchId === batchId);
+    const mt = metallographyRecords.filter((r) => r.batchId === batchId);
+    const hd = hardnessRecords.filter((r) => r.batchId === batchId);
+    const df = deformationRecords.filter((r) => r.batchId === batchId);
+    const batchParts = partItems.filter((p) => p.batchId === batchId);
+    const card = processCards.find((c) => c.id === furnaceBatches.find((b) => b.id === batchId)?.processCardId);
+
+    if (batchParts.length === 0) reasons.push("缺装炉零件");
+    if (!carb) reasons.push("缺渗碳记录");
+    if (!temp) reasons.push("缺回火记录");
+    if (mt.length === 0) reasons.push("缺金相记录");
+    if (hd.length === 0) reasons.push("缺硬度记录");
+
+    if (mt.some((m) => m.result === "fail")) reasons.push("金相不合格");
+    if (hd.some((h) => h.result === "fail")) reasons.push("硬度不合格");
+    if (df.some((d) => d.result === "fail")) reasons.push("变形矫正不合格");
+
+    if (card && carb) {
+      const avgD = safeAvg(carb.layerDepths);
+      if (avgD < card.layerDepthMin || avgD > card.layerDepthMax) reasons.push("渗碳层深超限");
+    }
+    if (card && hd.length > 0) {
+      const avgS = safeAvg(hd.map((h) => h.surfaceAvg));
+      const avgC = safeAvg(hd.map((h) => h.coreAvg));
+      if (avgS < card.hardnessMin || avgS > card.hardnessMax) reasons.push("表面硬度超限");
+      if (avgC < (card.hardnessMin - 10) || avgC > (card.hardnessMax - 5)) reasons.push("心部硬度超限");
+    }
+
+    return reasons;
+  };
+
+  const abnormalBatches = furnaceBatches
+    .map((b) => ({ batch: b, reasons: checkBatchAbnormal(b.id) }))
+    .filter((x) => x.reasons.length > 0)
+    .sort((a, b) => b.reasons.length - a.reasons.length);
+
   const statsData = [
     {
       label: "总炉次数",
@@ -157,10 +203,10 @@ export default function Dashboard() {
       trendUp: true,
     },
     {
-      label: "硬度合格率",
-      value: hardnessPassRate,
+      label: "综合合格率",
+      value: overallPassRate,
       unit: "%",
-      sub: `${passedHardness}/${allHardnessTests} 件合格`,
+      sub: `${passedTests}/${allTests} 项合格`,
       icon: CheckCircle2,
       color: "from-green-500 to-emerald-500",
       bg: "bg-green-50",
@@ -482,6 +528,84 @@ export default function Dashboard() {
             </tbody>
           </table>
         </div>
+      </div>
+
+      <div className="card-base border-red-100 bg-red-50/20">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="section-title mb-0">
+            <AlertCircle className="w-5 h-5 text-red-500" />
+            质量预警中心
+            <span className="ml-2 px-2 py-0.5 rounded-full bg-red-100 text-red-600 text-xs font-medium">
+              {abnormalBatches.length} 个异常炉次
+            </span>
+          </h2>
+          <button
+            onClick={() => navigate("/traceability")}
+            className="text-xs text-primary-600 hover:text-primary-700 font-medium flex items-center gap-1"
+          >
+            追溯详情
+            <ArrowUpRight className="w-3 h-3" />
+          </button>
+        </div>
+        {abnormalBatches.length > 0 ? (
+          <div className="space-y-2 max-h-80 overflow-y-auto -mx-1 px-1">
+            {abnormalBatches.map(({ batch, reasons }) => {
+              const st = statusMap[batch.status];
+              const severity = reasons.some((r) => r.includes("不合格") || r.includes("超限")) ? "严重" : "警告";
+              return (
+                <div
+                  key={batch.id}
+                  onClick={() => navigate(`/traceability?batchId=${batch.id}`)}
+                  className={cn(
+                    "p-3 rounded-lg border cursor-pointer transition-all hover:shadow-sm",
+                    severity === "严重"
+                      ? "bg-red-50/70 border-red-200 hover:bg-red-50"
+                      : "bg-amber-50/70 border-amber-200 hover:bg-amber-50"
+                  )}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2.5">
+                      <span className={cn(
+                        "w-6 h-6 rounded-full flex items-center justify-center",
+                        severity === "严重" ? "bg-red-100 text-red-600" : "bg-amber-100 text-amber-600"
+                      )}>
+                        {severity === "严重" ? <XCircle className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                      </span>
+                      <span className="font-mono text-sm font-semibold text-slate-800">{batch.batchNo}</span>
+                      <span className={cn("badge text-[10px]", st?.bgColor, st?.color)}>{st?.label}</span>
+                    </div>
+                    <span className={cn(
+                      "px-2 py-0.5 rounded text-[10px] font-medium",
+                      severity === "严重" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"
+                    )}>
+                      {severity} · {reasons.length}项
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 ml-8.5 pl-1">
+                    {reasons.map((r, i) => (
+                      <span
+                        key={i}
+                        className={cn(
+                          "px-2 py-0.5 rounded text-[10px]",
+                          r.includes("缺") ? "bg-slate-100 text-slate-600" :
+                          r.includes("不合格") ? "bg-red-100 text-red-700" :
+                          "bg-orange-100 text-orange-700"
+                        )}
+                      >
+                        {r}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="py-10 text-center">
+            <CheckCircle2 className="w-12 h-12 mx-auto text-green-400 mb-2" />
+            <div className="text-sm text-slate-500">所有炉次运行正常，无异常预警</div>
+          </div>
+        )}
       </div>
     </div>
   );

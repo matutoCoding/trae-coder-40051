@@ -9,6 +9,7 @@ import Metallography from "@/pages/Metallography";
 import Hardness from "@/pages/Hardness";
 import Deformation from "@/pages/Deformation";
 import Traceability from "@/pages/Traceability";
+import Statistics from "@/pages/Statistics";
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/hardness" element={<Hardness />} />
           <Route path="/deformation" element={<Deformation />} />
           <Route path="/traceability" element={<Traceability />} />
+          <Route path="/statistics" element={<Statistics />} />
           <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Route>
       </Routes>
